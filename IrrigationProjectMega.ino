@@ -87,7 +87,8 @@ void setup() {
 void loop() {
   rtc.read();
 
-  char logFilename[12];
+  //!!! The SD library supports a max file name size of 8.3 characters. !!!
+  char logFilename[12]; 
   sprintf(logFilename, "%d%d%d%s", rtc.year, rtc.month, rtc.day, ".log");
 
   Serial.print("Current log filename: ");
