@@ -1,4 +1,3 @@
-#include <SPI.h>
 #include <SD.h>
 #include <SHT1x.h>
 #include <Wire.h>
@@ -17,20 +16,20 @@ const unsigned short  WaterPumpFourPin=49;
 const unsigned short  TempHumidityDataPin=40;
 const unsigned short  TempHumidityClockPin=39;
 
-const unsigned short  WaterLevelSensorOnePin=24;
-const unsigned short  WaterLevelSensorTwoPin=25;
-const unsigned short  WaterLevelSensorThreePin=26;
-const unsigned short  WaterLevelSensorFourPin=27;
+const unsigned short  WaterLevelLowSensorOnePin=24;
+const unsigned short  WaterLevelHighSensorOnePin=25;
+const unsigned short  WaterLevelLowSensorTwoPin=26;
+const unsigned short  WaterLevelHighSensorTwoPin=27;
 
 int r,g,b;
 int t = 0;
 float temperature_c;
 float temperature_f;
 float humidity;
-int tankOneWaterLevel = 0;
-int tankTwoWaterLevel = 0;
-int tankThreeWaterLevel = 0;
-int tankFourWaterLevel = 0;
+int tankOneWaterLevelLow = 0;
+int tankOneWaterLevelHigh = 0;
+int tankTwoWaterLevelLow = 0;
+int tankTwoWaterLevelHigh = 0;
 bool pumping = false;
 bool filling = false;
 int lastFillingHour = 0;
@@ -40,14 +39,10 @@ int fillingMinute = 0;
 int fillingMaxDuration = 30;
 int fillingMaxFreqHours = 6;
 
-// set up variables using the SD utility library functions:
 File logFile;
-Sd2Card card;
-SdVolume volume;
-SdFile root;
 
-GravityRtc rtc;             //RTC Initialization
-DFRobot_RGBLCD lcd(16,2);   //16 characters and 3 lines of show
+GravityRtc rtc;
+DFRobot_RGBLCD lcd(16,2);
 SHT1x sht1x(TempHumidityDataPin, TempHumidityClockPin);
 
 void setup() {
@@ -63,10 +58,10 @@ void setup() {
   }
   Serial.println("Initialization SD card done.");
   
-  pinMode(WaterLevelSensorOnePin,INPUT);
-  pinMode(WaterLevelSensorTwoPin,INPUT);
-  pinMode(WaterLevelSensorThreePin,INPUT);
-  pinMode(WaterLevelSensorFourPin,INPUT);
+  pinMode(WaterLevelLowSensorOnePin,INPUT);
+  pinMode(WaterLevelHighSensorOnePin,INPUT);
+  pinMode(WaterLevelLowSensorTwoPin,INPUT);
+  pinMode(WaterLevelHighSensorTwoPin,INPUT);
   
   pinMode(WaterPumpOnePin, OUTPUT);
   pinMode(WaterPumpTwoPin, OUTPUT);
@@ -141,10 +136,10 @@ void loop() {
   PrintLog("Current timestamp: ");
   PrintLogLine(currentTimestamp);
   
-  tankOneWaterLevel = digitalRead(WaterLevelSensorOnePin);
-  tankTwoWaterLevel = digitalRead(WaterLevelSensorTwoPin);
-  tankThreeWaterLevel = digitalRead(WaterLevelSensorThreePin);
-  tankFourWaterLevel = digitalRead(WaterLevelSensorFourPin);
+  tankOneWaterLevelLow = digitalRead(WaterLevelLowSensorOnePin);
+  tankOneWaterLevelHigh = digitalRead(WaterLevelHighSensorOnePin);
+  tankTwoWaterLevelLow = digitalRead(WaterLevelLowSensorTwoPin);
+  tankTwoWaterLevelHigh = digitalRead(WaterLevelHighSensorTwoPin);
 
   // Read values from the sensor
   temperature_c = sht1x.readTemperatureC();
@@ -172,63 +167,83 @@ void loop() {
 
 void FillTanksIfNeeded()
 {
-    if(tankOneWaterLevel == 0 || tankTwoWaterLevel == 0 || tankThreeWaterLevel == 0 || tankFourWaterLevel == 0)
+  if(filling == true)
+  {
+    PrintLog("The tanks started filling at: ");
+    PrintLog(fillingHour);
+    PrintLog(":");
+    PrintLog(fillingMinute);
+    PrintLogLine("...");
+  }
+    
+  if(lastFillingHour > 0)
+  {
+    PrintLog("The tanks last completed filling at: ");
+    PrintLog(lastFillingHour);
+    PrintLog(":");
+    PrintLog(lastFillingMinute);
+    PrintLogLine("...");
+  }
+
+    //The tanks are self equalizing, so once one is low, the other tank should also be almost low.
+    //High level and low level water sensors have only been installed on two of the tanks.
+    //Since the tanks are setup to self equalize, this provides enough redundancy.
+    if(tankOneWaterLevelLow == 0 || tankTwoWaterLevelLow == 0)
     {
       PrintLogLine("One of the tanks is low on water...");
   
-      PrintLog("Water Level of Tank 1: ");
-      PrintLogLine(tankOneWaterLevel);
+      PrintLog("Water Low Level Reading of Tank 1: ");
+      PrintLogLine(tankOneWaterLevelLow);
     
-      PrintLog("Water Level of Tank 2: ");
-      PrintLogLine(tankTwoWaterLevel);
+      PrintLog("Water High Level Reading of Tank 1: ");
+      PrintLogLine(tankOneWaterLevelHigh);
   
-      PrintLog("Water Level of Tank 3: ");
-      PrintLogLine(tankThreeWaterLevel);
+      PrintLog("Water Low Level Reading of Tank 2: ");
+      PrintLogLine(tankTwoWaterLevelLow);
   
-      PrintLog("Water Level of Tank 4: ");
-      PrintLogLine(tankFourWaterLevel);
+      PrintLog("Water High Level Reading of Tank 2: ");
+      PrintLogLine(tankTwoWaterLevelLow);
 
       StartFillingTanks();
     }
-    else
+    //The tanks are self equalizing, so once one is full, the other tank should also be almost full.
+    else if(tankOneWaterLevelLow > 0 || tankTwoWaterLevelLow > 0)
     {
+      PrintLogLine("One of the tanks is full...");
       StopFillingTanks();
     }
-
-    if(lastFillingHour > 0)
+    else
     {
-        PrintLog("The tanks last completed filling at: ");
-        PrintLog(lastFillingHour);
-        PrintLog(":");
-        PrintLog(lastFillingMinute);
-        PrintLogLine("...");
+      StopFillingTanksWhenFillingForExcessiveTime();
     }
-            
-    if(filling == true)
+}
+
+//If a sensor fails, I don't want the tanks to keep trying to fill beyond full. So this is a saftey measure.
+void StopFillingTanksWhenFillingForExcessiveTime()
+{
+  if(filling == true)
     {
-      PrintLog("The tanks started filling at: ");
-      PrintLog(fillingHour);
-      PrintLog(":");
-      PrintLog(fillingMinute);
-      PrintLogLine("...");
- 
       if(fillingHour > 0)
       {
         if(fillingHour == rtc.hour && ((fillingMinute + fillingMaxDuration) < rtc.minute))
         {
-          PrintLogLine("The tanks have been filling for over 20 minutes. The water level sensors may not be working. Stopping the fill...");
+          PrintLog("The tanks have been filling for over ");
+          PrintLog(fillingMaxDuration);
+          PrintLogLine(" minutes. The water level sensors may not be working. Stopping the fill...");
           StopFillingTanks();
         }
         else if((fillingHour + 1) == rtc.hour && ((fillingMinute - 60 + fillingMaxDuration) < rtc.minute))
         {
-          PrintLogLine("The tanks have been filling for over 20 minutes. The water level sensors may not be working. Stopping the fill...");
+          PrintLog("The tanks have been filling for over ");
+          PrintLog(fillingMaxDuration);
+          PrintLogLine(" minutes. The water level sensors may not be working. Stopping the fill...");
           StopFillingTanks();
         }
       }  
     }
 }
 
-
+//Right now this is set up to run the pumps for 5 minutes at 7am and 6pm. This will be updated as needed.
 void WaterIfNeeded()
 {
   if(rtc.hour == 7)
@@ -261,7 +276,9 @@ void WaterIfNeeded()
   }
 }
 
-
+//This fills the tanks. 
+//If filling is already occuring the request will be ignored.
+//If a caller tries to call this method more than once every six hours the request will be ignored.
 void StartFillingTanks()
 {
   if(filling == false)
@@ -282,6 +299,8 @@ void StartFillingTanks()
   }
 }
 
+//This stops filling the tanks. 
+//If filling is not currently occuring the request will be ignored.
 void StopFillingTanks()
 {
   if(filling == true)
@@ -297,6 +316,7 @@ void StopFillingTanks()
   }
 }
 
+//This turns on the water pumps for all four tanks to start irrigating.
 void StartPumpWater()
 {
   if(pumping == false)
@@ -311,6 +331,7 @@ void StartPumpWater()
   }
 }
 
+//This turns off the water pumps on all four tanks to stop irrigating.
 void StopPumpWater()
 {
   if(pumping == true)
